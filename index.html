@@ -1,0 +1,69 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>PriceTracker</title>
+    <link rel="manifest" href="manifest.json">
+    <link rel="stylesheet" href="css/style.css">
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>💰</text></svg>">
+</head>
+<body>
+    <div id="app">
+        <header>
+            <h1>PriceTracker</h1>
+            <div class="search-container">
+                <input type="text" id="searchInput" placeholder="Buscar productos...">
+                <button id="clearSearchBtn" class="clear-btn">✕</button>
+            </div>
+        </header>
+
+        <main>
+            <div id="productsList">
+                <!-- Productos se cargarán aquí dinámicamente -->
+            </div>
+        </main>
+
+        <!-- Botón flotante para añadir nuevo producto -->
+        <button id="addProductBtn" class="fab" title="Añadir Producto">+</button>
+
+        <!-- Modal para añadir/editar producto -->
+        <div id="productModal" class="modal">
+            <div class="modal-content">
+                <span class="close">&times;</span>
+                <h2 id="modalTitle">Añadir Producto</h2>
+                <form id="productForm">
+                    <input type="hidden" id="productId">
+                    <div class="form-group">
+                        <label for="productName">Nombre del Producto</label>
+                        <input type="text" id="productName" required>
+                    </div>
+                    <div class="form-group">
+                        <label for="storeName">Tienda</label>
+                        <input type="text" id="storeName" required>
+                    </div>
+                    <div class="form-group">
+                        <label for="price">Precio</label>
+                        <input type="text" id="price" required pattern="[0-9]+([.,][0-9]{1,2})?">
+                    </div>
+                    <div class="form-group">
+                        <label for="unit">Unidad (opcional)</label>
+                        <input type="text" id="unit" placeholder="kg, litro, etc.">
+                    </div>
+                    <button type="submit" id="saveProductBtn">Guardar Producto</button>
+                </form>
+            </div>
+        </div>
+
+        <!-- Botones de importación/exportación en el footer -->
+        <footer>
+            <button id="exportBtn">Exportar Datos</button>
+            <button id="importBtn">Importar Datos</button>
+            <input type="file" id="importFile" accept=".json" style="display: none;">
+        </footer>
+    </div>
+
+    <script src="js/db.js"></script>
+    <script src="js/app.js"></script>
+</body>
+</html>

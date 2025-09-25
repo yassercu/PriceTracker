@@ -1,0 +1,325 @@
+/* Reset y estilos base */
+* {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+}
+
+body {
+    font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+    background-color: #272822; /* Fondo Monokai */
+    color: #f8f8f2; /* Texto Monokai */
+    line-height: 1.6;
+}
+
+#app {
+    max-width: 800px;
+    margin: 0 auto;
+    padding: 20px;
+    background-color: #272822;
+    min-height: 100vh;
+    position: relative;
+    color: #f8f8f2;
+}
+
+/* Header */
+header {
+    margin-bottom: 20px;
+    padding-bottom: 15px;
+    border-bottom: 1px solid #75715e; /* Color Monokai para bordes */
+}
+
+h1 {
+    text-align: center;
+    color: #f92672; /* Color Monokai rosa para títulos */
+    margin-bottom: 15px;
+    font-size: 1.8rem;
+}
+
+.search-container {
+    position: relative;
+    display: flex;
+}
+
+#searchInput {
+    flex: 1;
+    padding: 12px 15px;
+    border: 1px solid #75715e;
+    border-radius: 8px;
+    font-size: 1rem;
+    background-color: #3e3d32; /* Fondo Monokai para inputs */
+    color: #f8f8f2;
+}
+
+.clear-btn {
+    position: absolute;
+    right: 10px;
+    top: 50%;
+    transform: translateY(-50%);
+    background: none;
+    border: none;
+    font-size: 1.2rem;
+    cursor: pointer;
+    color: #fd971f; /* Color Monokai naranja */
+}
+
+#clearSearchBtn:hover {
+    color: #f92672; /* Color Monokai rosa */
+}
+
+/* Main */
+#productsList {
+    margin-top: 20px;
+}
+
+.product-card {
+    background: #3e3d32;
+    border-radius: 8px;
+    padding: 15px;
+    margin-bottom: 15px;
+    box-shadow: 0 2px 5px rgba(0,0,0,0.3);
+    border-left: 4px solid #66d9ef; /* Color Monokai azul claro */
+}
+
+.product-card.cheapest {
+    border-left-color: #a6e22e; /* Color Monokai verde */
+}
+
+.product-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 10px;
+}
+
+.product-name {
+    font-weight: bold;
+    font-size: 1.2rem;
+    color: #f8f8f2;
+}
+
+.product-price {
+    font-size: 1.3rem;
+    font-weight: bold;
+    color: #a6e22e; /* Color Monokai verde para precios */
+}
+
+.product-details {
+    display: flex;
+    justify-content: space-between;
+    margin-bottom: 10px;
+    color: #ae81ff; /* Color Monokai púrpura */
+}
+
+.product-store {
+    font-style: italic;
+}
+
+.product-unit {
+    color: #fd971f; /* Color Monokai naranja */
+}
+
+.product-date {
+    font-size: 0.8rem;
+    color: #75715e;
+    text-align: right;
+}
+
+.actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 10px;
+    margin-top: 10px;
+}
+
+.btn {
+    padding: 8px 15px;
+    border: none;
+    border-radius: 5px;
+    cursor: pointer;
+    font-size: 0.9rem;
+    transition: background-color 0.3s;
+    color: #f8f8f2;
+}
+
+.btn-edit {
+    background-color: #66d9ef; /* Color Monokai azul claro */
+    color: #272822;
+}
+
+.btn-edit:hover {
+    background-color: #5bc0de;
+}
+
+.btn-delete {
+    background-color: #f92672; /* Color Monokai rosa */
+    color: #f8f8f2;
+}
+
+.btn-delete:hover {
+    background-color: #ff5990;
+}
+
+/* Botón flotante (FAB) */
+.fab {
+    position: fixed;
+    bottom: 30px;
+    right: 30px;
+    width: 60px;
+    height: 60px;
+    border-radius: 50%;
+    background-color: #f92672; /* Color Monokai rosa */
+    color: #f8f8f2;
+    border: none;
+    font-size: 2rem;
+    cursor: pointer;
+    box-shadow: 0 4px 8px rgba(0,0,0,0.3);
+    z-index: 1000;
+}
+
+.fab:hover {
+    background-color: #ff5990;
+    transform: scale(1.05);
+}
+
+/* Modal */
+.modal {
+    display: none;
+    position: fixed;
+    z-index: 2000;
+    left: 0;
+    top: 0;
+    width: 100%;
+    height: 100%;
+    background-color: rgba(0,0,0,0.7);
+}
+
+.modal-content {
+    background-color: #3e3d32;
+    margin: 5% auto;
+    padding: 20px;
+    border-radius: 8px;
+    width: 90%;
+    max-width: 500px;
+    position: relative;
+    border: 1px solid #75715e;
+}
+
+.close {
+    color: #f8f8f2;
+    float: right;
+    font-size: 28px;
+    font-weight: bold;
+    cursor: pointer;
+}
+
+.close:hover {
+    color: #f92672;
+}
+
+.modal h2 {
+    margin-bottom: 20px;
+    color: #f92672;
+}
+
+.form-group {
+    margin-bottom: 15px;
+}
+
+.form-group label {
+    display: block;
+    margin-bottom: 5px;
+    font-weight: bold;
+    color: #ae81ff;
+}
+
+.form-group input {
+    width: 100%;
+    padding: 10px;
+    border: 1px solid #75715e;
+    border-radius: 5px;
+    font-size: 1rem;
+    background-color: #2d2d2d;
+    color: #f8f8f2;
+}
+
+#saveProductBtn {
+    width: 100%;
+    padding: 12px;
+    background-color: #a6e22e; /* Color Monokai verde */
+    color: #272822;
+    border: none;
+    border-radius: 5px;
+    font-size: 1rem;
+    cursor: pointer;
+}
+
+#saveProductBtn:hover {
+    background-color: #beffa1;
+}
+
+/* Footer con botones de importación/exportación */
+footer {
+    margin-top: 30px;
+    padding-top: 20px;
+    border-top: 1px solid #75715e;
+    display: flex;
+    gap: 10px;
+    justify-content: center;
+}
+
+footer button {
+    padding: 10px 20px;
+    background-color: #ae81ff; /* Color Monokai púrpura */
+    color: #272822;
+    border: none;
+    border-radius: 5px;
+    cursor: pointer;
+}
+
+footer button:hover {
+    background-color: #cfa8ff;
+}
+
+/* Vista de comparación */
+.comparison-group {
+    margin-bottom: 20px;
+    background: #3e3d32;
+    border-radius: 8px;
+    padding: 15px;
+    border-left: 4px solid #66d9ef;
+    border: 1px solid #75715e;
+}
+
+.comparison-title {
+    font-weight: bold;
+    margin-bottom: 10px;
+    color: #f8f8f2;
+}
+
+/* Responsive */
+@media (max-width: 600px) {
+    #app {
+        padding: 10px;
+        background-color: #272822;
+    }
+    
+    .product-header {
+        flex-direction: column;
+        align-items: flex-start;
+    }
+    
+    .product-price {
+        margin-top: 5px;
+    }
+    
+    .actions {
+        width: 100%;
+        justify-content: space-between;
+    }
+    
+    footer {
+        flex-direction: column;
+        align-items: center;
+    }
+}
