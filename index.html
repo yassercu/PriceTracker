@@ -16,6 +16,19 @@
                 <input type="text" id="searchInput" placeholder="Buscar productos...">
                 <button id="clearSearchBtn" class="clear-btn">✕</button>
             </div>
+            <div class="controls">
+                <label for="sortSelect" class="sr-only">Ordenar por</label>
+                <select id="sortSelect">
+                    <option value="pricePerUnit">Precio por unidad</option>
+                    <option value="price">Precio total</option>
+                    <option value="date">Fecha</option>
+                </select>
+                <label for="storeFilter" class="sr-only">Filtrar por tienda</label>
+                <select id="storeFilter">
+                    <option value="">Todas las tiendas</option>
+                </select>
+                <button id="denseToggle" title="Modo denso">Denso</button>
+            </div>
         </header>
 
         <main>
@@ -36,19 +49,25 @@
                     <input type="hidden" id="productId">
                     <div class="form-group">
                         <label for="productName">Nombre del Producto</label>
-                        <input type="text" id="productName" required>
+                        <input type="text" id="productName" list="productSuggestions" required autocomplete="off">
+                        <datalist id="productSuggestions"></datalist>
                     </div>
                     <div class="form-group">
                         <label for="storeName">Tienda</label>
-                        <input type="text" id="storeName" required>
+                        <input type="text" id="storeName" list="storeSuggestions" required autocomplete="off">
+                        <datalist id="storeSuggestions"></datalist>
                     </div>
                     <div class="form-group">
                         <label for="price">Precio</label>
                         <input type="text" id="price" required pattern="[0-9]+([.,][0-9]{1,2})?">
                     </div>
                     <div class="form-group">
-                        <label for="unit">Unidad (opcional)</label>
-                        <input type="text" id="unit" placeholder="kg, litro, etc.">
+                        <label for="unitQty">Cantidad de unidad (opcional)</label>
+                        <input type="number" id="unitQty" step="any" placeholder="1, 0.5, 250...">
+                    </div>
+                    <div class="form-group">
+                        <label for="unitLabel">Tipo de unidad (opcional)</label>
+                        <input type="text" id="unitLabel" placeholder="kg, L, unidad, etc.">
                     </div>
                     <button type="submit" id="saveProductBtn">Guardar Producto</button>
                 </form>

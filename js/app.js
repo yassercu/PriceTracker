@@ -2,11 +2,15 @@
 
 // Variables globales
 let editingProductId = null;
+let currentSort = 'pricePerUnit';
+let currentStoreFilter = '';
+let isDenseMode = localStorage.getItem('denseMode') === 'true';
 
 // Inicializar la aplicación
 async function initApp() {
     try {
         await initDB();
+        if (isDenseMode) document.getElementById('app').classList.add('dense');
         await loadProducts();
         setupEventListeners();
     } catch (error) {
@@ -16,7 +20,7 @@ async function initApp() {
 }
 
 // Cargar productos en la interfaz
-async function loadProducts(filter = '') {
+async function loadProducts(filter = document.getElementById('searchInput').value) {
     try {
         let products;
         if (filter) {
@@ -24,9 +28,15 @@ async function loadProducts(filter = '') {
         } else {
             products = await getAllProducts();
         }
+        // Llenar filtro de tiendas
+        populateStoreFilter(products);
+        // Aplicar filtro de tienda
+        if (currentStoreFilter) {
+            products = products.filter(p => p.storeName === currentStoreFilter);
+        }
         
         // Agrupar y ordenar productos
-        const groupedProducts = groupAndSortProducts(products);
+        const groupedProducts = groupAndSortProducts(products, { sortBy: currentSort });
         renderProducts(groupedProducts);
     } catch (error) {
         console.error('Error cargando productos:', error);
@@ -58,12 +68,18 @@ function renderProducts(groupedProducts) {
         title.textContent = productName;
         groupDiv.appendChild(title);
         
-        // Contenedor para los productos en este grupo
+        // Contenedor para los productos en este grupo (grid compacto)
         const productContainer = document.createElement('div');
+        productContainer.className = 'comparison-items';
         
         products.forEach((product, index) => {
             const card = createProductCard(product, index === 0); // El primer producto es el más barato
             productContainer.appendChild(card);
+            // Dibujar sparkline si hay historial
+            if (product.history && product.history.length > 1) {
+                const canvas = card.querySelector('.sparkline');
+                drawSparkline(canvas, product.history);
+            }
         });
         
         groupDiv.appendChild(productContainer);
@@ -71,27 +87,96 @@ function renderProducts(groupedProducts) {
     });
 }
 
+// Llenar el filtro de tiendas
+function populateStoreFilter(products) {
+    const storeFilter = document.getElementById('storeFilter');
+    const stores = [...new Set(products.map(p => p.storeName))].sort();
+    const currentVal = storeFilter.value;
+    // Guardar solo los hijos que no son opciones dinámicas
+    const staticOptions = Array.from(storeFilter.querySelectorAll('option[value=""]'));
+    storeFilter.innerHTML = '';
+    staticOptions.forEach(opt => storeFilter.appendChild(opt));
+    stores.forEach(store => {
+        const option = document.createElement('option');
+        option.value = store;
+        option.textContent = store;
+        storeFilter.appendChild(option);
+    });
+    storeFilter.value = currentVal;
+}
+
+// Llenar sugerencias de productos en el datalist del formulario
+async function populateProductSuggestions() {
+    try {
+        const products = await getAllProducts();
+        const productNames = [...new Set(products.map(p => p.productName))].sort();
+        const datalist = document.getElementById('productSuggestions');
+        if (datalist) {
+            datalist.innerHTML = '';
+            productNames.forEach(name => {
+                const option = document.createElement('option');
+                option.value = name;
+                datalist.appendChild(option);
+            });
+        }
+    } catch (error) {
+        console.error('Error poblando sugerencias de productos:', error);
+    }
+}
+
+// Llenar sugerencias de tiendas en el datalist del formulario
+async function populateStoreSuggestions() {
+    try {
+        const products = await getAllProducts();
+        const stores = [...new Set(products.map(p => p.storeName))].sort();
+        const datalist = document.getElementById('storeSuggestions');
+        if (datalist) {
+            datalist.innerHTML = '';
+            stores.forEach(store => {
+                const option = document.createElement('option');
+                option.value = store;
+                datalist.appendChild(option);
+            });
+        }
+    } catch (error) {
+        console.error('Error poblando sugerencias de tiendas:', error);
+    }
+}
+
 // Crear tarjeta de producto
 function createProductCard(product, isCheapest = false) {
     const card = document.createElement('div');
     card.className = `product-card ${isCheapest ? 'cheapest' : ''}`;
     
-    // Formatear precio con coma para el formato europeo
-    const formattedPrice = product.price.replace('.', ',');
+    const formattedPrice = parseFloat(product.price).toLocaleString('es-ES', { style: 'currency', currency: 'EUR' });
+    const ppu = product.pricePerUnit
+        ? `${parseFloat(product.pricePerUnit).toLocaleString('es-ES', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}€/${product.unitLabel || 'u'}`
+        : '';
     
+    const hasHistory = product.history && product.history.length > 1;
+
     card.innerHTML = `
-        <div class="product-header">
-            <div class="product-name">${product.productName}</div>
-            <div class="product-price">${formattedPrice}€</div>
+        <div class="card-main">
+            <div class="product-header">
+                <div class="product-name">${product.productName}</div>
+                <div class="product-price">${formattedPrice}</div>
+            </div>
+            <div class="product-details">
+                <div class="product-store">${product.storeName}</div>
+                ${product.unitQty ? `<div class="product-unit">${product.unitQty} ${product.unitLabel || ''}</div>` : ''}
+            </div>
+            ${ppu ? `<div class="product-ppu">${ppu}</div>` : ''}
+            ${hasHistory ? `
+            <div class="sparkline-container">
+                <canvas class="sparkline"></canvas>
+            </div>` : ''}
         </div>
-        <div class="product-details">
-            <div class="product-store">${product.storeName}</div>
-            ${product.unit ? `<div class="product-unit">${product.unit}</div>` : ''}
-        </div>
-        <div class="product-date">${product.dateAdded}</div>
-        <div class="actions">
-            <button class="btn btn-edit" data-id="${product.id}">Editar</button>
-            <button class="btn btn-delete" data-id="${product.id}">Eliminar</button>
+        <div class="card-footer">
+            <div class="product-date">${product.dateAdded}</div>
+            <div class="actions">
+                <button class="btn icon btn-edit" title="Editar" aria-label="Editar" data-id="${product.id}">✎</button>
+                <button class="btn icon btn-delete" title="Eliminar" aria-label="Eliminar" data-id="${product.id}">🗑</button>
+            </div>
         </div>
     `;
     
@@ -106,6 +191,8 @@ function setupEventListeners() {
         document.getElementById('productForm').reset();
         document.getElementById('productId').value = '';
         editingProductId = null;
+        populateStoreSuggestions();
+        populateProductSuggestions();
         document.getElementById('productModal').style.display = 'block';
     });
     
@@ -122,14 +209,36 @@ function setupEventListeners() {
     document.getElementById('productForm').addEventListener('submit', handleProductSubmit);
     
     // Buscar productos
+    let searchTimeout;
     document.getElementById('searchInput').addEventListener('input', (e) => {
-        const query = e.target.value;
-        loadProducts(query);
+        clearTimeout(searchTimeout);
+        searchTimeout = setTimeout(() => loadProducts(e.target.value), 200); // Debounce
     });
     
     // Botón para limpiar búsqueda
     document.getElementById('clearSearchBtn').addEventListener('click', () => {
-        document.getElementById('searchInput').value = '';
+        const input = document.getElementById('searchInput');
+        input.value = '';
+        input.focus();
+        loadProducts();
+    });
+
+    // Controles de orden y filtro
+    document.getElementById('sortSelect').addEventListener('change', (e) => {
+        currentSort = e.target.value;
+        loadProducts();
+    });
+
+    document.getElementById('storeFilter').addEventListener('change', (e) => {
+        currentStoreFilter = e.target.value;
+        loadProducts();
+    });
+
+    // Modo denso
+    document.getElementById('denseToggle').addEventListener('click', () => {
+        isDenseMode = !isDenseMode;
+        localStorage.setItem('denseMode', isDenseMode);
+        document.getElementById('app').classList.toggle('dense', isDenseMode);
     });
     
     // Botón de exportar
@@ -186,7 +295,8 @@ async function handleProductSubmit(event) {
     const name = document.getElementById('productName').value.trim();
     const store = document.getElementById('storeName').value.trim();
     const price = document.getElementById('price').value.trim();
-    const unit = document.getElementById('unit').value.trim();
+    const unitQty = document.getElementById('unitQty').value.trim();
+    const unitLabel = document.getElementById('unitLabel').value.trim();
     
     // Validar que el precio tenga formato numérico europeo
     if (!/^[0-9]+([.,][0-9]{1,2})?$/.test(price)) {
@@ -194,14 +304,12 @@ async function handleProductSubmit(event) {
         return;
     }
     
-    // Normalizar el precio a formato con punto (para almacenamiento interno)
-    const normalizedPrice = price.replace(',', '.');
-    
     const product = {
         productName: name,
         storeName: store,
-        price: normalizedPrice,
-        unit: unit
+        price: price,
+        unitQty: unitQty,
+        unitLabel: unitLabel
     };
     
     try {
@@ -231,16 +339,49 @@ async function editProduct(id) {
             document.getElementById('productId').value = product.id;
             document.getElementById('productName').value = product.productName;
             document.getElementById('storeName').value = product.storeName;
-            // Mostrar precio con coma para formato europeo
-            document.getElementById('price').value = product.price.replace('.', ',');
-            document.getElementById('unit').value = product.unit || '';
+            document.getElementById('price').value = String(product.price).replace('.', ',');
+            document.getElementById('unitQty').value = product.unitQty || '';
+            document.getElementById('unitLabel').value = product.unitLabel || '';
             
             editingProductId = id;
-            document.getElementById('productModal').style.display = 'block';
+        populateStoreSuggestions();
+        populateProductSuggestions();
+        document.getElementById('productModal').style.display = 'block';
         }
     } catch (error) {
         console.error('Error obteniendo producto para editar:', error);
     }
+}
+
+// Dibujar sparkline
+function drawSparkline(canvas, history) {
+    if (!canvas || !history || history.length < 2) return;
+    const ctx = canvas.getContext('2d');
+    const width = canvas.clientWidth;
+    const height = canvas.clientHeight;
+    canvas.width = width;
+    canvas.height = height;
+
+    const prices = history.map(h => h.price);
+    const minPrice = Math.min(...prices);
+    const maxPrice = Math.max(...prices);
+    const priceRange = maxPrice - minPrice;
+
+    ctx.strokeStyle = '#ae81ff';
+    ctx.lineWidth = 1.5;
+    ctx.beginPath();
+
+    prices.forEach((price, index) => {
+        const x = (index / (prices.length - 1)) * width;
+        const y = height - (priceRange > 0 ? ((price - minPrice) / priceRange) * (height - 4) + 2 : height / 2);
+        if (index === 0) {
+            ctx.moveTo(x, y);
+        } else {
+            ctx.lineTo(x, y);
+        }
+    });
+
+    ctx.stroke();
 }
 
 // Eliminar producto con confirmación

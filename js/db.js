@@ -1,11 +1,32 @@
 // db.js - Gestión de IndexedDB para PriceTracker
 
 const DB_NAME = 'PriceTrackerDB';
-const DB_VERSION = 1;
+const DB_VERSION = 2;
 const STORE_NAME = 'products';
 
 // Variable para almacenar la conexión a la base de datos
 let db;
+
+// Utilidades
+function normalizeName(name) {
+    return (name || '')
+        .normalize('NFD')
+        .replace(/[\u0300-\u036f]/g, '')
+        .toLowerCase()
+        .trim();
+}
+
+function priceToNumber(p) {
+    // acepta coma o punto
+    if (typeof p === 'number') return p;
+    return parseFloat(String(p).replace(',', '.')) || 0;
+}
+
+function computePricePerUnit(priceNum, unitQty) {
+    const qty = parseFloat(unitQty);
+    if (!qty || qty <= 0) return null;
+    return priceNum / qty;
+}
 
 // Inicializar la base de datos
 function initDB() {
@@ -24,11 +45,20 @@ function initDB() {
         
         request.onupgradeneeded = (event) => {
             const db = event.target.result;
+            let objectStore;
             if (!db.objectStoreNames.contains(STORE_NAME)) {
-                // Crear el almacén de objetos
-                const objectStore = db.createObjectStore(STORE_NAME, { keyPath: 'id', autoIncrement: true });
-                // Crear índices para búsquedas eficientes
+                objectStore = db.createObjectStore(STORE_NAME, { keyPath: 'id', autoIncrement: true });
+            } else {
+                objectStore = event.target.transaction.objectStore(STORE_NAME);
+            }
+            // Asegurar índices
+            if (!objectStore.indexNames.contains('productName')) {
                 objectStore.createIndex('productName', 'productName', { unique: false });
+            }
+            if (!objectStore.indexNames.contains('productNameNorm')) {
+                objectStore.createIndex('productNameNorm', 'productNameNorm', { unique: false });
+            }
+            if (!objectStore.indexNames.contains('dateAdded')) {
                 objectStore.createIndex('dateAdded', 'dateAdded', { unique: false });
             }
         };
@@ -42,9 +72,16 @@ function createProduct(product) {
         const store = transaction.objectStore(STORE_NAME);
         
         // Añadir fecha de creación
+        const priceNum = priceToNumber(product.price);
+        const ppu = computePricePerUnit(priceNum, product.unitQty);
+        const now = new Date();
         const productWithDate = {
             ...product,
-            dateAdded: new Date().toLocaleDateString('es-ES')
+            price: String(priceNum).replace('.', '.'),
+            productNameNorm: normalizeName(product.productName),
+            pricePerUnit: ppu,
+            dateAdded: now.toLocaleDateString('es-ES'),
+            history: [{ date: now.toISOString(), price: priceNum }]
         };
         
         const request = store.add(productWithDate);
@@ -88,10 +125,21 @@ function updateProduct(id, updatedProduct) {
         request.onsuccess = () => {
             const product = request.result;
             // Mantener la fecha original pero actualizar la de modificación
+            const priceNum = priceToNumber(updatedProduct.price);
+            const ppu = computePricePerUnit(priceNum, updatedProduct.unitQty);
+            const nowISO = new Date().toISOString();
+            const history = Array.isArray(product.history) ? product.history.slice() : [];
+            if (priceToNumber(product.price) !== priceNum) {
+                history.push({ date: nowISO, price: priceNum });
+            }
             const updatedProductWithDate = {
                 ...updatedProduct,
                 id: product.id,
-                dateAdded: product.dateAdded
+                productNameNorm: normalizeName(updatedProduct.productName),
+                price: String(priceNum),
+                pricePerUnit: ppu,
+                dateAdded: product.dateAdded,
+                history
             };
             
             const updateRequest = store.put(updatedProductWithDate);
@@ -120,14 +168,19 @@ function searchProducts(query) {
     return new Promise((resolve, reject) => {
         const transaction = db.transaction([STORE_NAME], 'readonly');
         const store = transaction.objectStore(STORE_NAME);
-        const index = store.index('productName');
-        const request = index.getAll();
+        // obtener todos para poder normalizar en caliente si hiciera falta
+        const request = store.getAll();
         
         request.onsuccess = () => {
             const products = request.result;
-            const filteredProducts = products.filter(product => 
-                product.productName.toLowerCase().includes(query.toLowerCase())
-            );
+            const qn = normalizeName(query);
+            // Rellenar productNameNorm si falta (migración suave)
+            products.forEach(p => {
+                if (!p.productNameNorm) p.productNameNorm = normalizeName(p.productName);
+            });
+            const filteredProducts = qn
+                ? products.filter(product => product.productNameNorm.includes(qn))
+                : products;
             resolve(filteredProducts);
         };
         
@@ -139,29 +192,42 @@ function searchProducts(query) {
 function groupProductsByName(products) {
     const grouped = {};
     products.forEach(product => {
-        const name = product.productName;
-        if (!grouped[name]) {
-            grouped[name] = [];
+        const key = product.productNameNorm || normalizeName(product.productName);
+        if (!grouped[key]) {
+            grouped[key] = { displayName: product.productName, items: [] };
         }
-        grouped[name].push(product);
+        grouped[key].items.push(product);
+        // actualizar displayName si el actual es más largo/informativo
+        if (product.productName.length > grouped[key].displayName.length) {
+            grouped[key].displayName = product.productName;
+        }
     });
     return grouped;
 }
 
 // Agrupar y ordenar productos por precio
-function groupAndSortProducts(products) {
-    const grouped = groupProductsByName(products);
-    
-    Object.keys(grouped).forEach(name => {
-        // Ordenar por precio de menor a mayor
-        grouped[name].sort((a, b) => {
-            // Convertir precios a números, considerando formato europeo
-            const priceA = parseFloat(a.price.replace(',', '.'));
-            const priceB = parseFloat(b.price.replace(',', '.'));
-            return priceA - priceB;
+function groupAndSortProducts(products, options = {}) {
+    const { sortBy = 'pricePerUnit' } = options; // 'pricePerUnit' | 'price' | 'date'
+    const groupedRaw = groupProductsByName(products);
+    const grouped = {};
+    Object.keys(groupedRaw).forEach(key => {
+        const arr = groupedRaw[key].items.slice();
+        arr.sort((a, b) => {
+            const pa = priceToNumber(a.price);
+            const pb = priceToNumber(b.price);
+            const pua = a.pricePerUnit ?? computePricePerUnit(pa, a.unitQty) ?? pa;
+            const pub = b.pricePerUnit ?? computePricePerUnit(pb, b.unitQty) ?? pb;
+            if (sortBy === 'date') {
+                return new Date(a.dateAdded) - new Date(b.dateAdded);
+            }
+            if (sortBy === 'price') {
+                return pa - pb;
+            }
+            // default: pricePerUnit
+            return pua - pub;
         });
+        grouped[groupedRaw[key].displayName] = arr;
     });
-    
     return grouped;
 }
 
