@@ -1,12 +1,12 @@
 {
   "name": "PriceTracker",
   "short_name": "PriceTracker",
-  "description": "Aplicación para comparar precios de productos en diferentes tiendas",
+  "description": "Compara precios de productos entre tiendas, escanea tarjetas de precio y crea listas de compra inteligentes",
   "start_url": "/",
   "scope": "/",
   "display": "standalone",
-  "background_color": "#ffffff",
-  "theme_color": "#3498db",
+  "background_color": "#0b0d17",
+  "theme_color": "#ff2e88",
   "icons": [
     {
       "src": "data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>💰</text></svg>",
@@ -16,6 +16,12 @@
     {
       "src": "data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>💰</text></svg>",
       "sizes": "512x512",
+      "type": "image/svg+xml"
+    },
+    {
+      "src": "data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>💰</text></svg>",
+      "sizes": "512x512",
+      "purpose": "maskable",
       "type": "image/svg+xml"
     }
   ]

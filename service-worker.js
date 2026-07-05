@@ -1,47 +1,65 @@
-const CACHE_NAME = 'price-tracker-v1';
+const CACHE_NAME = 'price-tracker-v4';
 const urlsToCache = [
-  '/',
-  '/index.html',
-  '/css/style.css',
-  '/js/db.js',
-  '/js/app.js',
-  '/manifest.json'
+    './',
+    './index.html',
+    './css/style.css',
+    './js/db.js',
+    './js/app.js',
+    './manifest.json'
 ];
 
-// Instalar service worker
+const CDN_CACHE = 'price-tracker-cdn-v1';
+const cdnUrls = [
+    'https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js'
+];
+
 self.addEventListener('install', event => {
-  event.waitUntil(
-    caches.open(CACHE_NAME)
-      .then(cache => {
-        console.log('Cache abierto');
-        return cache.addAll(urlsToCache);
-      })
-  );
+    event.waitUntil(
+        Promise.all([
+            caches.open(CACHE_NAME).then(cache => cache.addAll(urlsToCache)),
+            caches.open(CDN_CACHE).then(cache => {
+                return Promise.allSettled(
+                    cdnUrls.map(url => cache.add(url).catch(() => {}))
+                );
+            })
+        ])
+    );
+    self.skipWaiting();
 });
 
-// Activar service worker
 self.addEventListener('activate', event => {
-  event.waitUntil(
-    caches.keys().then(cacheNames => {
-      return Promise.all(
-        cacheNames.map(cacheName => {
-          if (cacheName !== CACHE_NAME) {
-            console.log('Eliminando caché antigua:', cacheName);
-            return caches.delete(cacheName);
-          }
-        })
-      );
-    })
-  );
+    event.waitUntil(
+        caches.keys().then(cacheNames =>
+            Promise.all(
+                cacheNames
+                    .filter(name => name !== CACHE_NAME && name !== CDN_CACHE)
+                    .map(name => caches.delete(name))
+            )
+        )
+    );
+    self.clients.claim();
 });
 
-// Interceptando solicitudes de red
 self.addEventListener('fetch', event => {
-  event.respondWith(
-    caches.match(event.request)
-      .then(response => {
-        // Devolver respuesta desde caché o hacer solicitud de red
-        return response || fetch(event.request);
-      })
-  );
+    const requestUrl = event.request.url;
+
+    if (cdnUrls.some(url => requestUrl.startsWith(url))) {
+        event.respondWith(
+            caches.match(event.request).then(cached => {
+                const fetchPromise = fetch(event.request).then(response => {
+                    return caches.open(CDN_CACHE).then(cache => {
+                        cache.put(event.request, response.clone());
+                        return response;
+                    });
+                });
+                return cached || fetchPromise;
+            })
+        );
+        return;
+    }
+
+    event.respondWith(
+        caches.match(event.request)
+            .then(response => response || fetch(event.request))
+    );
 });

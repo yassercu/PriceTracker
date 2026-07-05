@@ -1,13 +1,21 @@
-// db.js - Gestión de IndexedDB para PriceTracker
-
 const DB_NAME = 'PriceTrackerDB';
-const DB_VERSION = 2;
-const STORE_NAME = 'products';
+const DB_VERSION = 4;
+const PRODUCT_STORE = 'products';
+const LIST_STORE = 'shoppingLists';
 
-// Variable para almacenar la conexión a la base de datos
+const UNIT_PRESETS = [
+    { value: 'kg', label: 'Kilogramo (kg)', defaultQty: 1 },
+    { value: 'g', label: 'Gramo (g)', defaultQty: 250 },
+    { value: 'L', label: 'Litro (L)', defaultQty: 1 },
+    { value: 'ml', label: 'Mililitro (ml)', defaultQty: 500 },
+    { value: 'unidad', label: 'Unidad', defaultQty: 1 },
+    { value: 'pack', label: 'Pack / paquete', defaultQty: 1 },
+    { value: 'docena', label: 'Docena', defaultQty: 12 },
+    { value: 'cl', label: 'Centilitro (cl)', defaultQty: 33 }
+];
+
 let db;
 
-// Utilidades
 function normalizeName(name) {
     return (name || '')
         .normalize('NFD')
@@ -16,8 +24,27 @@ function normalizeName(name) {
         .trim();
 }
 
+function normalizeUnitLabel(label) {
+    const norm = normalizeName(label);
+    const aliases = {
+        kilogramo: 'kg', kilogramos: 'kg', kilo: 'kg', kgs: 'kg',
+        gramo: 'g', gramos: 'g', gr: 'g',
+        litro: 'L', litros: 'L', l: 'L',
+        mililitro: 'ml', mililitros: 'ml',
+        unidades: 'unidad', ud: 'unidad', uds: 'unidad', u: 'unidad',
+        paquete: 'pack', paquetes: 'pack',
+        docenas: 'docena',
+        kilogramme: 'kg', kilogrammes: 'kg',
+        gramme: 'g', grammes: 'g',
+        litre: 'L', litres: 'L',
+        millilitre: 'ml', millilitres: 'ml', centilitre: 'cl', centilitres: 'cl',
+        unite: 'unidad', unites: 'unidad',
+        paquet: 'pack', paquets: 'pack'
+    };
+    return aliases[norm] || (label || '').trim();
+}
+
 function priceToNumber(p) {
-    // acepta coma o punto
     if (typeof p === 'number') return p;
     return parseFloat(String(p).replace(',', '.')) || 0;
 }
@@ -28,167 +55,241 @@ function computePricePerUnit(priceNum, unitQty) {
     return priceNum / qty;
 }
 
-// Inicializar la base de datos
+function getComparableValue(product, sortBy = 'pricePerUnit') {
+    const price = priceToNumber(product.price);
+    if (sortBy === 'price') return price;
+    if (sortBy === 'date') {
+        return product.dateAddedISO ? new Date(product.dateAddedISO).getTime() : new Date(product.dateAdded).getTime();
+    }
+    return product.pricePerUnit ?? computePricePerUnit(price, product.unitQty) ?? price;
+}
+
+function enrichProduct(product) {
+    const priceNum = priceToNumber(product.price);
+    const now = new Date();
+    const dateAddedISO = product.dateAddedISO || now.toISOString();
+    return {
+        ...product,
+        price: priceNum,
+        productNameNorm: normalizeName(product.productName),
+        storeNameNorm: normalizeName(product.storeName),
+        unitLabel: product.unitLabel ? normalizeUnitLabel(product.unitLabel) : '',
+        pricePerUnit: computePricePerUnit(priceNum, product.unitQty),
+        dateAdded: product.dateAdded || now.toLocaleDateString('es-ES'),
+        dateAddedISO,
+        history: Array.isArray(product.history) ? product.history : [{ date: dateAddedISO, price: priceNum }]
+    };
+}
+
+function dbRequest(request) {
+    return new Promise((resolve, reject) => {
+        request.onsuccess = () => resolve(request.result);
+        request.onerror = () => reject(request.error);
+    });
+}
+
 function initDB() {
     return new Promise((resolve, reject) => {
         const request = indexedDB.open(DB_NAME, DB_VERSION);
-        
+
         request.onerror = () => {
             console.error('Error al abrir la base de datos:', request.error);
             reject(request.error);
         };
-        
+
         request.onsuccess = () => {
             db = request.result;
             resolve(db);
         };
-        
+
         request.onupgradeneeded = (event) => {
             const db = event.target.result;
-            let objectStore;
-            if (!db.objectStoreNames.contains(STORE_NAME)) {
-                objectStore = db.createObjectStore(STORE_NAME, { keyPath: 'id', autoIncrement: true });
-            } else {
-                objectStore = event.target.transaction.objectStore(STORE_NAME);
+
+            if (!db.objectStoreNames.contains(PRODUCT_STORE)) {
+                const store = db.createObjectStore(PRODUCT_STORE, { keyPath: 'id', autoIncrement: true });
+                store.createIndex('productName', 'productName', { unique: false });
+                store.createIndex('productNameNorm', 'productNameNorm', { unique: false });
+                store.createIndex('storeNameNorm', 'storeNameNorm', { unique: false });
+                store.createIndex('dateAdded', 'dateAdded', { unique: false });
             }
-            // Asegurar índices
-            if (!objectStore.indexNames.contains('productName')) {
-                objectStore.createIndex('productName', 'productName', { unique: false });
-            }
-            if (!objectStore.indexNames.contains('productNameNorm')) {
-                objectStore.createIndex('productNameNorm', 'productNameNorm', { unique: false });
-            }
-            if (!objectStore.indexNames.contains('dateAdded')) {
-                objectStore.createIndex('dateAdded', 'dateAdded', { unique: false });
+
+            if (!db.objectStoreNames.contains(LIST_STORE)) {
+                const listStore = db.createObjectStore(LIST_STORE, { keyPath: 'id', autoIncrement: true });
+                listStore.createIndex('createdAt', 'createdAt', { unique: false });
             }
         };
     });
 }
 
-// Crear un nuevo producto
-function createProduct(product) {
-    return new Promise((resolve, reject) => {
-        const transaction = db.transaction([STORE_NAME], 'readwrite');
-        const store = transaction.objectStore(STORE_NAME);
-        
-        // Añadir fecha de creación
-        const priceNum = priceToNumber(product.price);
-        const ppu = computePricePerUnit(priceNum, product.unitQty);
-        const now = new Date();
-        const productWithDate = {
-            ...product,
-            price: String(priceNum).replace('.', '.'),
-            productNameNorm: normalizeName(product.productName),
-            pricePerUnit: ppu,
-            dateAdded: now.toLocaleDateString('es-ES'),
-            history: [{ date: now.toISOString(), price: priceNum }]
-        };
-        
-        const request = store.add(productWithDate);
-        
-        request.onsuccess = () => resolve(request.result);
-        request.onerror = () => reject(request.error);
-    });
+async function migrateProducts() {
+    const products = await getAllProductsRaw();
+    for (const product of products) {
+        const needsMigration = !product.productNameNorm || !product.storeNameNorm || !product.dateAddedISO;
+        if (needsMigration) {
+            const enriched = enrichProduct(product);
+            await putProduct(enriched);
+        }
+    }
 }
 
-// Obtener todos los productos
+function getAllProductsRaw() {
+    if (!db) return Promise.resolve([]);
+    const transaction = db.transaction([PRODUCT_STORE], 'readonly');
+    const store = transaction.objectStore(PRODUCT_STORE);
+    return dbRequest(store.getAll());
+}
+
+function putProduct(product) {
+    const transaction = db.transaction([PRODUCT_STORE], 'readwrite');
+    const store = transaction.objectStore(PRODUCT_STORE);
+    return dbRequest(store.put(product));
+}
+
+async function findProductByNameAndStore(productName, storeName, excludeId = null) {
+    const products = await getAllProducts();
+    const nameNorm = normalizeName(productName);
+    const storeNorm = normalizeName(storeName);
+    return products.find(p =>
+        (p.productNameNorm || normalizeName(p.productName)) === nameNorm &&
+        (p.storeNameNorm || normalizeName(p.storeName)) === storeNorm &&
+        p.id !== excludeId
+    ) || null;
+}
+
+async function getUniqueStores() {
+    const products = await getAllProducts();
+    const storeMap = new Map();
+    products.forEach(p => {
+        const norm = p.storeNameNorm || normalizeName(p.storeName);
+        const existing = storeMap.get(norm);
+        if (!existing || p.storeName.length > existing.length) {
+            storeMap.set(norm, p.storeName);
+        }
+    });
+    return [...storeMap.values()].sort((a, b) => a.localeCompare(b, 'es'));
+}
+
+function resolveCanonicalStoreName(input, existingStores) {
+    const norm = normalizeName(input);
+    if (!norm) return input.trim();
+    const match = existingStores.find(s => normalizeName(s) === norm);
+    return match || input.trim();
+}
+
+function resolveCanonicalProductName(input, existingNames) {
+    const norm = normalizeName(input);
+    if (!norm) return input.trim();
+    const match = existingNames.find(n => normalizeName(n) === norm);
+    return match || input.trim();
+}
+
+async function createProduct(product) {
+    const existingStores = await getUniqueStores();
+    const canonicalStore = resolveCanonicalStoreName(product.storeName, existingStores);
+    const duplicate = await findProductByNameAndStore(product.productName, canonicalStore);
+    if (duplicate) {
+        const err = new Error('DUPLICATE_PRODUCT');
+        err.existingProduct = duplicate;
+        throw err;
+    }
+
+    const now = new Date();
+    const nowISO = now.toISOString();
+    const priceNum = priceToNumber(product.price);
+    const enriched = enrichProduct({
+        ...product,
+        storeName: canonicalStore,
+        price: priceNum,
+        dateAdded: now.toLocaleDateString('es-ES'),
+        dateAddedISO: nowISO,
+        history: [{ date: nowISO, price: priceNum }]
+    });
+
+    const transaction = db.transaction([PRODUCT_STORE], 'readwrite');
+    const store = transaction.objectStore(PRODUCT_STORE);
+    return dbRequest(store.add(enriched));
+}
+
 function getAllProducts() {
-    return new Promise((resolve, reject) => {
-        const transaction = db.transaction([STORE_NAME], 'readonly');
-        const store = transaction.objectStore(STORE_NAME);
-        const request = store.getAll();
-        
-        request.onsuccess = () => resolve(request.result);
-        request.onerror = () => reject(request.error);
-    });
+    if (!db) return Promise.resolve([]);
+    const transaction = db.transaction([PRODUCT_STORE], 'readonly');
+    const store = transaction.objectStore(PRODUCT_STORE);
+    return dbRequest(store.getAll()).then(products =>
+        products.map(p => {
+            if (!p.storeNameNorm || !p.productNameNorm) return enrichProduct(p);
+            return p;
+        })
+    );
 }
 
-// Obtener un producto por ID
 function getProductById(id) {
-    return new Promise((resolve, reject) => {
-        const transaction = db.transaction([STORE_NAME], 'readonly');
-        const store = transaction.objectStore(STORE_NAME);
-        const request = store.get(id);
-        
-        request.onsuccess = () => resolve(request.result);
-        request.onerror = () => reject(request.error);
-    });
+    const transaction = db.transaction([PRODUCT_STORE], 'readonly');
+    const store = transaction.objectStore(PRODUCT_STORE);
+    return dbRequest(store.get(id));
 }
 
-// Actualizar un producto
-function updateProduct(id, updatedProduct) {
-    return new Promise((resolve, reject) => {
-        const transaction = db.transaction([STORE_NAME], 'readwrite');
-        const store = transaction.objectStore(STORE_NAME);
-        const request = store.get(id);
-        
-        request.onsuccess = () => {
-            const product = request.result;
-            // Mantener la fecha original pero actualizar la de modificación
-            const priceNum = priceToNumber(updatedProduct.price);
-            const ppu = computePricePerUnit(priceNum, updatedProduct.unitQty);
-            const nowISO = new Date().toISOString();
-            const history = Array.isArray(product.history) ? product.history.slice() : [];
-            if (priceToNumber(product.price) !== priceNum) {
-                history.push({ date: nowISO, price: priceNum });
-            }
-            const updatedProductWithDate = {
-                ...updatedProduct,
-                id: product.id,
-                productNameNorm: normalizeName(updatedProduct.productName),
-                price: String(priceNum),
-                pricePerUnit: ppu,
-                dateAdded: product.dateAdded,
-                history
-            };
-            
-            const updateRequest = store.put(updatedProductWithDate);
-            updateRequest.onsuccess = () => resolve(updateRequest.result);
-            updateRequest.onerror = () => reject(updateRequest.error);
-        };
-        
-        request.onerror = () => reject(request.error);
+async function updateProduct(id, updatedProduct) {
+    const product = await getProductById(id);
+    if (!product) throw new Error('Producto no encontrado');
+
+    const existingStores = await getUniqueStores();
+    const canonicalStore = resolveCanonicalStoreName(updatedProduct.storeName, existingStores);
+    const duplicate = await findProductByNameAndStore(
+        updatedProduct.productName,
+        canonicalStore,
+        id
+    );
+    if (duplicate) {
+        const err = new Error('DUPLICATE_PRODUCT');
+        err.existingProduct = duplicate;
+        throw err;
+    }
+
+    const priceNum = priceToNumber(updatedProduct.price);
+    const ppu = computePricePerUnit(priceNum, updatedProduct.unitQty);
+    const nowISO = new Date().toISOString();
+    const history = Array.isArray(product.history) ? [...product.history] : [];
+    if (priceToNumber(product.price) !== priceNum) {
+        history.push({ date: nowISO, price: priceNum });
+    }
+
+    const enriched = enrichProduct({
+        ...updatedProduct,
+        storeName: canonicalStore,
+        id: product.id,
+        price: priceNum,
+        pricePerUnit: ppu,
+        dateAdded: product.dateAdded,
+        dateAddedISO: product.dateAddedISO || nowISO,
+        history
     });
+
+    const transaction = db.transaction([PRODUCT_STORE], 'readwrite');
+    const store = transaction.objectStore(PRODUCT_STORE);
+    return dbRequest(store.put(enriched));
 }
 
-// Eliminar un producto
 function deleteProduct(id) {
-    return new Promise((resolve, reject) => {
-        const transaction = db.transaction([STORE_NAME], 'readwrite');
-        const store = transaction.objectStore(STORE_NAME);
-        const request = store.delete(id);
-        
-        request.onsuccess = () => resolve(request.result);
-        request.onerror = () => reject(request.error);
-    });
+    const transaction = db.transaction([PRODUCT_STORE], 'readwrite');
+    const store = transaction.objectStore(PRODUCT_STORE);
+    return dbRequest(store.delete(id));
 }
 
-// Buscar productos por nombre
 function searchProducts(query) {
-    return new Promise((resolve, reject) => {
-        const transaction = db.transaction([STORE_NAME], 'readonly');
-        const store = transaction.objectStore(STORE_NAME);
-        // obtener todos para poder normalizar en caliente si hiciera falta
-        const request = store.getAll();
-        
-        request.onsuccess = () => {
-            const products = request.result;
-            const qn = normalizeName(query);
-            // Rellenar productNameNorm si falta (migración suave)
-            products.forEach(p => {
-                if (!p.productNameNorm) p.productNameNorm = normalizeName(p.productName);
-            });
-            const filteredProducts = qn
-                ? products.filter(product => product.productNameNorm.includes(qn))
-                : products;
-            resolve(filteredProducts);
-        };
-        
-        request.onerror = () => reject(request.error);
+    if (!db) return Promise.resolve([]);
+    const transaction = db.transaction([PRODUCT_STORE], 'readonly');
+    const store = transaction.objectStore(PRODUCT_STORE);
+    return dbRequest(store.getAll()).then(products => {
+        const results = products.map(p => enrichProduct(p));
+        const qn = normalizeName(query);
+        if (!qn) return results;
+        return results.filter(p =>
+            p.productNameNorm.includes(qn) ||
+            p.storeNameNorm.includes(qn)
+        );
     });
 }
 
-// Agrupar productos por nombre
 function groupProductsByName(products) {
     const grouped = {};
     products.forEach(product => {
@@ -197,7 +298,6 @@ function groupProductsByName(products) {
             grouped[key] = { displayName: product.productName, items: [] };
         }
         grouped[key].items.push(product);
-        // actualizar displayName si el actual es más largo/informativo
         if (product.productName.length > grouped[key].displayName.length) {
             grouped[key].displayName = product.productName;
         }
@@ -205,49 +305,166 @@ function groupProductsByName(products) {
     return grouped;
 }
 
-// Agrupar y ordenar productos por precio
 function groupAndSortProducts(products, options = {}) {
-    const { sortBy = 'pricePerUnit' } = options; // 'pricePerUnit' | 'price' | 'date'
+    const { sortBy = 'pricePerUnit' } = options;
     const groupedRaw = groupProductsByName(products);
     const grouped = {};
     Object.keys(groupedRaw).forEach(key => {
-        const arr = groupedRaw[key].items.slice();
-        arr.sort((a, b) => {
-            const pa = priceToNumber(a.price);
-            const pb = priceToNumber(b.price);
-            const pua = a.pricePerUnit ?? computePricePerUnit(pa, a.unitQty) ?? pa;
-            const pub = b.pricePerUnit ?? computePricePerUnit(pb, b.unitQty) ?? pb;
-            if (sortBy === 'date') {
-                return new Date(a.dateAdded) - new Date(b.dateAdded);
-            }
-            if (sortBy === 'price') {
-                return pa - pb;
-            }
-            // default: pricePerUnit
-            return pua - pub;
-        });
+        const arr = [...groupedRaw[key].items];
+        arr.sort((a, b) => getComparableValue(a, sortBy) - getComparableValue(b, sortBy));
         grouped[groupedRaw[key].displayName] = arr;
     });
     return grouped;
 }
 
-// Exportar todos los datos
+function getBestProductInGroup(products, sortBy = 'pricePerUnit') {
+    if (!products.length) return null;
+    return products.reduce((best, current) =>
+        getComparableValue(current, sortBy) < getComparableValue(best, sortBy) ? current : best
+    );
+}
+
+// --- Shopping List Functions ---
+
+async function createShoppingList(name) {
+    const now = new Date().toISOString();
+    const list = {
+        name: name.trim(),
+        createdAt: now,
+        updatedAt: now,
+        items: []
+    };
+    const transaction = db.transaction([LIST_STORE], 'readwrite');
+    const store = transaction.objectStore(LIST_STORE);
+    const id = await dbRequest(store.add(list));
+    return { ...list, id };
+}
+
+async function getAllShoppingLists() {
+    if (!db) return [];
+    const transaction = db.transaction([LIST_STORE], 'readonly');
+    const store = transaction.objectStore(LIST_STORE);
+    return dbRequest(store.getAll());
+}
+
+async function getShoppingList(id) {
+    const transaction = db.transaction([LIST_STORE], 'readonly');
+    const store = transaction.objectStore(LIST_STORE);
+    return dbRequest(store.get(id));
+}
+
+async function updateShoppingList(id, updates) {
+    const list = await getShoppingList(id);
+    if (!list) throw new Error('Lista no encontrada');
+    const updated = { ...list, ...updates, updatedAt: new Date().toISOString() };
+    const transaction = db.transaction([LIST_STORE], 'readwrite');
+    const store = transaction.objectStore(LIST_STORE);
+    return dbRequest(store.put(updated));
+}
+
+async function deleteShoppingList(id) {
+    const transaction = db.transaction([LIST_STORE], 'readwrite');
+    const store = transaction.objectStore(LIST_STORE);
+    return dbRequest(store.delete(id));
+}
+
+async function addListItem(listId, item) {
+    const list = await getShoppingList(listId);
+    if (!list) throw new Error('Lista no encontrada');
+    const newItem = {
+        id: Date.now() + Math.random(),
+        productName: item.productName.trim(),
+        quantity: item.quantity || 1,
+        checked: false
+    };
+    list.items.push(newItem);
+    list.updatedAt = new Date().toISOString();
+    const transaction = db.transaction([LIST_STORE], 'readwrite');
+    const store = transaction.objectStore(LIST_STORE);
+    await dbRequest(store.put(list));
+    return newItem;
+}
+
+async function updateListItem(listId, itemId, updates) {
+    const list = await getShoppingList(listId);
+    if (!list) throw new Error('Lista no encontrada');
+    const idx = list.items.findIndex(i => i.id === itemId);
+    if (idx === -1) throw new Error('Item no encontrado');
+    list.items[idx] = { ...list.items[idx], ...updates };
+    list.updatedAt = new Date().toISOString();
+    const transaction = db.transaction([LIST_STORE], 'readwrite');
+    const store = transaction.objectStore(LIST_STORE);
+    return dbRequest(store.put(list));
+}
+
+async function removeListItem(listId, itemId) {
+    const list = await getShoppingList(listId);
+    if (!list) throw new Error('Lista no encontrada');
+    list.items = list.items.filter(i => i.id !== itemId);
+    list.updatedAt = new Date().toISOString();
+    const transaction = db.transaction([LIST_STORE], 'readwrite');
+    const store = transaction.objectStore(LIST_STORE);
+    return dbRequest(store.put(list));
+}
+
+async function getSmartSuggestions(listId) {
+    const list = await getShoppingList(listId);
+    if (!list || !list.items.length) return [];
+
+    const allProducts = await getAllProducts();
+    const groupedProducts = groupProductsByName(allProducts);
+
+    return list.items.map(item => {
+        const itemNorm = normalizeName(item.productName);
+        const key = Object.keys(groupedProducts).find(k =>
+            normalizeName(k) === itemNorm ||
+            k.includes(itemNorm) ||
+            itemNorm.includes(k)
+        );
+
+        if (!key) {
+            return { item, suggestions: [], best: null };
+        }
+
+        const matches = groupedProducts[key].items;
+        const byStore = {};
+        matches.forEach(p => {
+            if (!byStore[p.storeNameNorm]) {
+                byStore[p.storeNameNorm] = { store: p.storeName, options: [] };
+            }
+            byStore[p.storeNameNorm].options.push(p);
+        });
+
+        const suggestions = Object.values(byStore).map(s => {
+            const cheapest = s.options.reduce((a, b) =>
+                priceToNumber(a.price) < priceToNumber(b.price) ? a : b
+            );
+            return {
+                store: s.store,
+                price: priceToNumber(cheapest.price),
+                pricePerUnit: cheapest.pricePerUnit,
+                productName: cheapest.productName,
+                unitQty: cheapest.unitQty,
+                unitLabel: cheapest.unitLabel
+            };
+        }).sort((a, b) => a.price - b.price);
+
+        const best = suggestions[0] || null;
+
+        return { item, suggestions, best };
+    });
+}
+
 async function exportData() {
     try {
-        const products = await getAllProducts();
-        const data = {
-            products: products,
-            exportDate: new Date().toISOString()
-        };
-        
+        const [products, lists] = await Promise.all([getAllProducts(), getAllShoppingLists()]);
+        const data = { products, lists, exportDate: new Date().toISOString() };
+
         const dataStr = JSON.stringify(data, null, 2);
-        const dataUri = 'data:application/json;charset=utf-8,'+ encodeURIComponent(dataStr);
-        
-        const exportFileDefaultName = 'price-tracker-backup.json';
-        
+        const dataUri = 'data:application/json;charset=utf-8,' + encodeURIComponent(dataStr);
         const linkElement = document.createElement('a');
         linkElement.setAttribute('href', dataUri);
-        linkElement.setAttribute('download', exportFileDefaultName);
+        linkElement.setAttribute('download', 'price-tracker-backup.json');
         linkElement.click();
     } catch (error) {
         console.error('Error al exportar datos:', error);
@@ -255,29 +472,73 @@ async function exportData() {
     }
 }
 
-// Importar datos
-async function importData(file) {
+async function importData(file, options = {}) {
+    const { merge = true } = options;
     return new Promise((resolve, reject) => {
         const reader = new FileReader();
-        
+
         reader.onload = async (event) => {
             try {
                 const importedData = JSON.parse(event.target.result);
-                const products = importedData.products || [];
-                
-                // Añadir los productos importados a la base de datos
-                for (const product of products) {
-                    // Eliminar el ID para que se genere uno nuevo
+                const importedProducts = importedData.products || [];
+                const importedLists = importedData.lists || [];
+                let imported = 0, skipped = 0, updated = 0;
+
+                for (const product of importedProducts) {
                     delete product.id;
-                    await createProduct(product);
+                    const enriched = enrichProduct(product);
+
+                    if (merge) {
+                        const existing = await findProductByNameAndStore(
+                            enriched.productName, enriched.storeName
+                        );
+                        if (existing) {
+                            const existingPrice = priceToNumber(existing.price);
+                            const newPrice = priceToNumber(enriched.price);
+                            if (existingPrice !== newPrice) {
+                                await updateProduct(existing.id, enriched);
+                                updated++;
+                            } else {
+                                skipped++;
+                            }
+                            continue;
+                        }
+                    }
+
+                    try {
+                        await createProduct(enriched);
+                        imported++;
+                    } catch (err) {
+                        if (err.message === 'DUPLICATE_PRODUCT') skipped++;
+                        else throw err;
+                    }
                 }
-                
-                resolve(products.length);
+
+                for (const list of importedLists) {
+                    delete list.id;
+                    const now = new Date().toISOString();
+                    const newList = {
+                        name: list.name.trim(),
+                        createdAt: list.createdAt || now,
+                        updatedAt: now,
+                        items: (list.items || []).map(item => ({
+                            id: Date.now() + Math.random(),
+                            productName: item.productName.trim(),
+                            quantity: item.quantity || 1,
+                            checked: !!item.checked
+                        }))
+                    };
+                    const transaction = db.transaction([LIST_STORE], 'readwrite');
+                    const store = transaction.objectStore(LIST_STORE);
+                    await dbRequest(store.add(newList));
+                }
+
+                resolve({ imported, skipped, updated, importedLists: importedLists.length, total: importedProducts.length });
             } catch (error) {
                 reject(error);
             }
         };
-        
+
         reader.onerror = () => reject(reader.error);
         reader.readAsText(file);
     });

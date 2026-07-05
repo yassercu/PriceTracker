@@ -7,80 +7,146 @@
     <link rel="manifest" href="manifest.json">
     <link rel="stylesheet" href="css/style.css">
     <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>💰</text></svg>">
+    <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
 </head>
 <body>
     <div id="app">
         <header>
-            <h1>PriceTracker</h1>
-            <div class="search-container">
-                <input type="text" id="searchInput" placeholder="Buscar productos...">
-                <button id="clearSearchBtn" class="clear-btn">✕</button>
+            <div class="header-top">
+                <div class="header-title-group">
+                    <h1>PriceTracker</h1>
+                    <p class="tagline">Compara precios y encuentra dónde comprar mejor</p>
+                </div>
+                <div class="header-actions">
+                    <button id="exportBtn" type="button" class="btn-header">Exportar</button>
+                    <button id="importBtn" type="button" class="btn-header">Importar</button>
+                    <input type="file" id="importFile" accept=".json" hidden>
+                </div>
             </div>
-            <div class="controls">
-                <label for="sortSelect" class="sr-only">Ordenar por</label>
-                <select id="sortSelect">
-                    <option value="pricePerUnit">Precio por unidad</option>
-                    <option value="price">Precio total</option>
-                    <option value="date">Fecha</option>
-                </select>
-                <label for="storeFilter" class="sr-only">Filtrar por tienda</label>
-                <select id="storeFilter">
-                    <option value="">Todas las tiendas</option>
-                </select>
-                <button id="denseToggle" title="Modo denso">Denso</button>
+
+            <div class="tab-bar" role="tablist">
+                <button class="tab-btn active" data-tab="comparator" role="tab" aria-selected="true">
+                    <span class="tab-icon">📊</span> Comparador
+                </button>
+                <button class="tab-btn" data-tab="shoppingLists" role="tab" aria-selected="false">
+                    <span class="tab-icon">🛒</span> Lista de compra
+                </button>
             </div>
         </header>
 
         <main>
-            <div id="productsList">
-                <!-- Productos se cargarán aquí dinámicamente -->
+            <div id="comparatorView">
+                <div class="search-container">
+                    <input type="search" id="searchInput" placeholder="Buscar productos o tiendas..." autocomplete="off">
+                    <button id="clearSearchBtn" class="clear-btn" aria-label="Limpiar búsqueda">✕</button>
+                </div>
+                <div class="controls">
+                    <label for="sortSelect" class="sr-only">Ordenar por</label>
+                    <select id="sortSelect">
+                        <option value="pricePerUnit">Mejor precio / unidad</option>
+                        <option value="price">Precio total</option>
+                        <option value="date">Más reciente</option>
+                    </select>
+                    <label for="storeFilter" class="sr-only">Filtrar por tienda</label>
+                    <select id="storeFilter">
+                        <option value="">Todas las tiendas</option>
+                    </select>
+                    <button id="denseToggle" type="button" title="Modo denso" aria-pressed="false">Denso</button>
+                </div>
+                <div id="statsBar" class="stats-bar" hidden></div>
+                <div id="productsList" role="region" aria-live="polite" aria-label="Lista de productos"></div>
+            </div>
+
+            <div id="shoppingListsView" hidden>
+                <div class="shopping-lists-header">
+                    <h2>Mis listas de compra</h2>
+                    <button id="addListBtn" class="btn-primary">+ Nueva lista</button>
+                </div>
+                <div id="shoppingListsContainer" role="region" aria-live="polite" aria-label="Listas de compra"></div>
             </div>
         </main>
 
-        <!-- Botón flotante para añadir nuevo producto -->
-        <button id="addProductBtn" class="fab" title="Añadir Producto">+</button>
+        <button id="addProductBtn" class="fab" title="Añadir precio" aria-label="Añadir precio">+</button>
 
-        <!-- Modal para añadir/editar producto -->
-        <div id="productModal" class="modal">
+        <!-- Product Modal -->
+        <div id="productModal" class="modal" role="dialog" aria-modal="true" aria-labelledby="modalTitle">
             <div class="modal-content">
-                <span class="close">&times;</span>
-                <h2 id="modalTitle">Añadir Producto</h2>
+                <button type="button" class="close" aria-label="Cerrar">&times;</button>
+                <h2 id="modalTitle">Añadir precio</h2>
+
+                <div id="scanSection" class="scan-container">
+                    <button type="button" id="scanBtn" class="scan-btn-large">
+                        <svg viewBox="0 0 24 24"><path d="M4,4H7V2H4A2,2,0,0,0,2,4V7H4ZM20,2H17V4h3V7h2V4A2,2,0,0,0,20,2ZM4,20H7v2H4a2,2,0,0,1-2-2V17H4ZM20,20H17v2h3a2,2,0,0,0,2-2V17H20ZM12,15a3,3,0,1,0-3-3A3,3,0,0,0,12,15Zm0-4a1,1,0,1,1-1,1A1,1,0,0,1,12,11ZM7,12a5,5,0,1,1,5,5A5,5,0,0,1,7,12Z"/></svg>
+                        <span>Escanear o subir tarjeta de precio</span>
+                    </button>
+                    <p class="scan-demo-hint">¿No tienes una imagen? <a href="#" id="demoScanBtn">Probar con el ejemplo</a></p>
+                    <input type="file" id="scanInput" accept="image/*" capture="environment" hidden>
+                    <div id="scanLoading" class="ocr-loading" hidden>
+                        <div class="spinner"></div>
+                        <p>Analizando imagen...</p>
+                    </div>
+                </div>
+
                 <form id="productForm">
                     <input type="hidden" id="productId">
                     <div class="form-group">
-                        <label for="productName">Nombre del Producto</label>
-                        <input type="text" id="productName" list="productSuggestions" required autocomplete="off">
+                        <label for="productName">Producto</label>
+                        <input type="text" id="productName" list="productSuggestions" required autocomplete="off" placeholder="Ej: Leche entera">
                         <datalist id="productSuggestions"></datalist>
                     </div>
                     <div class="form-group">
                         <label for="storeName">Tienda</label>
-                        <input type="text" id="storeName" list="storeSuggestions" required autocomplete="off">
+                        <input type="text" id="storeName" list="storeSuggestions" required autocomplete="off" placeholder="Selecciona o escribe una tienda">
                         <datalist id="storeSuggestions"></datalist>
+                        <div id="storeChips" class="store-chips" aria-label="Tiendas existentes"></div>
                     </div>
                     <div class="form-group">
-                        <label for="price">Precio</label>
-                        <input type="text" id="price" required pattern="[0-9]+([.,][0-9]{1,2})?">
+                        <label for="price">Precio (€)</label>
+                        <input type="text" id="price" required pattern="[0-9]+([.,][0-9]{1,2})?" inputmode="decimal" placeholder="1,99">
                     </div>
-                    <div class="form-group">
-                        <label for="unitQty">Cantidad de unidad (opcional)</label>
-                        <input type="number" id="unitQty" step="any" placeholder="1, 0.5, 250...">
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label for="unitQty">Cantidad</label>
+                            <input type="number" id="unitQty" step="any" placeholder="1">
+                        </div>
+                        <div class="form-group">
+                            <label for="unitLabel">Unidad</label>
+                            <select id="unitLabel">
+                                <option value="">Sin unidad</option>
+                            </select>
+                        </div>
                     </div>
-                    <div class="form-group">
-                        <label for="unitLabel">Tipo de unidad (opcional)</label>
-                        <input type="text" id="unitLabel" placeholder="kg, L, unidad, etc.">
-                    </div>
-                    <button type="submit" id="saveProductBtn">Guardar Producto</button>
+                    <p class="form-hint">La cantidad y unidad permiten comparar precios normalizados (€/kg, €/L...)</p>
+                    <div id="ppuPreview" class="ppu-preview" hidden></div>
+                    <div id="duplicateWarning" class="duplicate-warning" hidden></div>
+                    <button type="submit" id="saveProductBtn">Guardar</button>
                 </form>
             </div>
         </div>
 
-        <!-- Botones de importación/exportación en el footer -->
-        <footer>
-            <button id="exportBtn">Exportar Datos</button>
-            <button id="importBtn">Importar Datos</button>
-            <input type="file" id="importFile" accept=".json" style="display: none;">
-        </footer>
+        <!-- Shopping List Options Modal -->
+        <div id="optionsModal" class="options-modal" role="dialog" aria-modal="true">
+            <div class="options-modal-content">
+                <button type="button" class="close-options" aria-label="Cerrar">&times;</button>
+                <div id="optionsContent"></div>
+            </div>
+        </div>
+
+        <!-- Custom Confirm Modal -->
+        <div id="confirmModal" class="confirm-modal" role="alertdialog" aria-modal="true">
+            <div class="confirm-modal-content">
+                <p id="confirmMessage"></p>
+                <div class="confirm-actions">
+                    <button id="confirmYes" class="btn-confirm-yes">Sí, eliminar</button>
+                    <button id="confirmNo" class="btn-confirm-no">Cancelar</button>
+                </div>
+            </div>
+        </div>
     </div>
+
+    <div id="toastContainer" class="toast-container" aria-live="polite"></div>
+
+    <datalist id="shoppingListSuggest"></datalist>
 
     <script src="js/db.js"></script>
     <script src="js/app.js"></script>
