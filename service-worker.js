@@ -5,7 +5,8 @@ const urlsToCache = [
     './css/style.css',
     './js/db.js',
     './js/app.js',
-    './manifest.json'
+    './manifest.json',
+    './offline.html'
 ];
 
 const CDN_CACHE = 'price-tracker-cdn-v1';
@@ -58,8 +59,22 @@ self.addEventListener('fetch', event => {
         return;
     }
 
+    if (event.request.mode === 'navigate') {
+        event.respondWith(
+            fetch(event.request).catch(() => caches.match('./offline.html'))
+        );
+        return;
+    }
+
     event.respondWith(
-        caches.match(event.request)
-            .then(response => response || fetch(event.request))
+        caches.match(event.request).then(cached => {
+            const fetchPromise = fetch(event.request).then(response => {
+                if (response && response.status === 200) {
+                    caches.open(CACHE_NAME).then(cache => cache.put(event.request, response.clone()));
+                }
+                return response;
+            }).catch(() => cached);
+            return cached || fetchPromise;
+        })
     );
 });

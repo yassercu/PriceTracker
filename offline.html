@@ -1,0 +1,44 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>PriceTracker — Sin conexión</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            background: #0b0d17;
+            color: #e8e8f0;
+            font-family: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            text-align: center;
+            padding: 1.5rem;
+        }
+        .wrap { max-width: 360px; }
+        .icon { font-size: 4rem; margin-bottom: 1rem; }
+        h1 { font-size: 1.5rem; margin-bottom: 0.75rem; }
+        p { color: #a8a8c0; line-height: 1.5; margin-bottom: 1.5rem; }
+        button {
+            background: #ff2e88;
+            color: #fff;
+            border: none;
+            padding: 0.75rem 1.5rem;
+            border-radius: 8px;
+            font-size: 1rem;
+            cursor: pointer;
+        }
+        button:hover { background: #e91e78; }
+    </style>
+</head>
+<body>
+    <div class="wrap">
+        <div class="icon">📡</div>
+        <h1>Estás sin conexión</h1>
+        <p>No se pudo cargar la página. Revisa tu conexión e inténtalo de nuevo.</p>
+        <button onclick="location.reload()">Reintentar</button>
+    </div>
+</body>
+</html>

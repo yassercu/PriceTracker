@@ -186,7 +186,7 @@ function renderProducts(groupedProducts, query) {
 
         const title = document.createElement('h3');
         title.className = 'comparison-title';
-        title.innerHTML = highlightText(productName, query);
+        title.innerHTML = highlightText(escapeHtml(productName), query);
 
         const meta = document.createElement('div');
         meta.className = 'comparison-meta';
@@ -231,7 +231,7 @@ function createProductCard(product, isBest, bestValue, sortBy, query) {
         <div class="card-main">
             ${isBest ? '<span class="best-badge">Mejor opción</span>' : ''}
             <div class="product-header">
-                <div class="product-store-name">${highlightText(product.storeName, query)}</div>
+                <div class="product-store-name">${highlightText(escapeHtml(product.storeName), query)}</div>
                 <div class="product-price">${formattedPrice}</div>
             </div>
             <div class="product-details">
@@ -513,7 +513,7 @@ async function handleProductSubmit(event) {
 
     try {
         if (id) {
-            await updateProduct(parseInt(id), product);
+            await updateProduct(Number(id), product);
             showToast('Precio actualizado', 'success');
         } else {
             await createProduct(product);
@@ -735,7 +735,25 @@ async function renderShoppingLists() {
             const item = list.items[idx];
             cb.addEventListener('change', async () => {
                 await updateListItem(list.id, item.id, { checked: cb.checked });
-                renderShoppingLists();
+                const itemEl = cb.closest('.list-item');
+                itemEl.classList.toggle('checked', cb.checked);
+                const nameEl = itemEl.querySelector('.list-item-name');
+                if (nameEl) nameEl.classList.toggle('checked-text', cb.checked);
+                const checkedCount = card.querySelectorAll('input[type="checkbox"]:checked').length;
+                let countEl = card.querySelector('.list-checked-count');
+                if (checkedCount > 0) {
+                    if (countEl) {
+                        countEl.textContent = `${checkedCount}✓`;
+                    } else {
+                        const meta = card.querySelector('.list-card-meta');
+                        countEl = document.createElement('span');
+                        countEl.className = 'list-checked-count';
+                        meta.appendChild(countEl);
+                        countEl.textContent = `${checkedCount}✓`;
+                    }
+                } else if (countEl) {
+                    countEl.remove();
+                }
             });
         });
 
@@ -812,13 +830,43 @@ async function showShoppingListOptions(list, suggestions) {
 }
 
 function openNewListModal() {
-    const name = prompt('Nombre de la nueva lista:');
-    if (name && name.trim()) {
-        createShoppingList(name.trim()).then(() => {
-            renderShoppingLists();
-            showToast('Lista creada', 'success');
+    let dialog = document.getElementById('newListDialog');
+    if (!dialog) {
+        dialog = document.createElement('dialog');
+        dialog.id = 'newListDialog';
+        dialog.className = 'modal-dialog';
+        dialog.innerHTML = `
+            <form method="dialog" class="new-list-form">
+                <h3>Nueva lista</h3>
+                <input type="text" class="new-list-input" placeholder="Nombre de la lista" autocomplete="off" required>
+                <div class="new-list-actions">
+                    <button type="button" class="btn-secondary new-list-cancel">Cancelar</button>
+                    <button type="submit" class="btn-primary new-list-create">Crear</button>
+                </div>
+            </form>
+        `;
+        document.getElementById('app').appendChild(dialog);
+
+        const form = dialog.querySelector('.new-list-form');
+        const input = dialog.querySelector('.new-list-input');
+        form.addEventListener('submit', () => {
+            const name = input.value.trim();
+            input.value = '';
+            if (name) {
+                createShoppingList(name).then(() => {
+                    renderShoppingLists();
+                    showToast('Lista creada', 'success');
+                });
+            }
+            dialog.close();
+        });
+        dialog.querySelector('.new-list-cancel').addEventListener('click', () => {
+            input.value = '';
+            dialog.close();
         });
     }
+    dialog.querySelector('.new-list-input').value = '';
+    dialog.showModal();
 }
 
 // --- Event Listeners ---
@@ -979,9 +1027,9 @@ function setupEventListeners() {
 
     document.getElementById('productsList').addEventListener('click', (e) => {
         if (e.target.classList.contains('btn-edit')) {
-            editProduct(parseInt(e.target.getAttribute('data-id')));
+            editProduct(Number(e.target.getAttribute('data-id')));
         } else if (e.target.classList.contains('btn-delete')) {
-            deleteProductPrompt(parseInt(e.target.getAttribute('data-id')));
+            deleteProductPrompt(Number(e.target.getAttribute('data-id')));
         }
     });
 
@@ -1023,7 +1071,10 @@ if ('serviceWorker' in navigator) {
     window.addEventListener('load', () => {
         const swPath = new URL('service-worker.js', window.location.href).pathname;
         navigator.serviceWorker.register(swPath)
-            .then(registration => console.log('ServiceWorker registrado:', registration.scope))
+            .then(registration => {
+                console.log('ServiceWorker registrado:', registration.scope);
+                navigator.serviceWorker.addEventListener('controllerchange', () => window.location.reload());
+            })
             .catch(error => console.log('Error registrando ServiceWorker:', error));
     });
 }

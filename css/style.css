@@ -276,6 +276,7 @@ header {
 
 .stats-bar .stat strong {
     color: var(--green);
+    font-variant-numeric: tabular-nums;
 }
 
 /* Comparison Header */
@@ -376,13 +377,13 @@ header {
 
 .product-store-name {
     font-weight: 700;
-    color: var(--purple);
+    color: var(--text-muted);
     font-size: 1rem;
 }
 
 .product-store-name mark {
-    background: rgba(168, 85, 247, 0.2);
-    color: var(--purple);
+    background: rgba(255, 255, 255, 0.08);
+    color: var(--text);
     border-radius: 4px;
     padding: 0 4px;
 }
@@ -392,6 +393,7 @@ header {
     font-weight: 800;
     color: var(--green);
     white-space: nowrap;
+    font-variant-numeric: tabular-nums;
 }
 
 .product-details {
@@ -834,6 +836,7 @@ header {
     gap: 12px;
     font-size: 0.8rem;
     color: var(--text-muted);
+    font-variant-numeric: tabular-nums;
 }
 
 .list-checked-count {
@@ -843,6 +846,7 @@ header {
 .list-total {
     color: var(--blue);
     font-weight: 600;
+    font-variant-numeric: tabular-nums;
 }
 
 .list-card-items {
@@ -1058,6 +1062,7 @@ header {
 .options-total strong {
     color: var(--green);
     font-size: 1.2rem;
+    font-variant-numeric: tabular-nums;
 }
 
 .options-no-data {
@@ -1304,4 +1309,61 @@ footer button:hover {
     clip: rect(0, 0, 0, 0);
     white-space: nowrap;
     border: 0;
+}
+
+@media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+        animation-duration: 0.001ms !important;
+        animation-iteration-count: 1 !important;
+        transition-duration: 0.001ms !important;
+        scroll-behavior: auto !important;
+    }
+}
+
+/* Native dialog (new shopping list) */
+.modal-dialog {
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    background: var(--surface);
+    color: var(--text);
+    padding: 28px;
+    width: 92%;
+    max-width: 420px;
+    box-shadow: var(--shadow-lg);
+}
+
+.modal-dialog::backdrop {
+    background-color: rgba(8, 10, 20, 0.85);
+    backdrop-filter: blur(10px);
+}
+
+.new-list-form h3 {
+    font-size: 1.2rem;
+    font-weight: 700;
+    margin-bottom: 16px;
+}
+
+.new-list-input {
+    width: 100%;
+    padding: 12px 14px;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    color: var(--text);
+    font-size: 0.95rem;
+    margin-bottom: 16px;
+}
+
+.new-list-input:focus {
+    outline: none;
+    border-color: var(--accent);
+    box-shadow: 0 0 0 3px var(--accent-glow);
+}
+
+.new-list-actions {
+    display: flex;
+    gap: 10px;
+    justify-content: flex-end;
 }

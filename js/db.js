@@ -15,6 +15,7 @@ const UNIT_PRESETS = [
 ];
 
 let db;
+let _productsCache = null;
 
 function normalizeName(name) {
     return (name || '')
@@ -140,6 +141,7 @@ function getAllProductsRaw() {
 }
 
 function putProduct(product) {
+    _productsCache = null;
     const transaction = db.transaction([PRODUCT_STORE], 'readwrite');
     const store = transaction.objectStore(PRODUCT_STORE);
     return dbRequest(store.put(product));
@@ -211,15 +213,18 @@ async function createProduct(product) {
 }
 
 function getAllProducts() {
+    if (_productsCache) return Promise.resolve(_productsCache);
     if (!db) return Promise.resolve([]);
     const transaction = db.transaction([PRODUCT_STORE], 'readonly');
     const store = transaction.objectStore(PRODUCT_STORE);
-    return dbRequest(store.getAll()).then(products =>
-        products.map(p => {
+    return dbRequest(store.getAll()).then(products => {
+        const enriched = products.map(p => {
             if (!p.storeNameNorm || !p.productNameNorm) return enrichProduct(p);
             return p;
-        })
-    );
+        });
+        _productsCache = enriched;
+        return enriched;
+    });
 }
 
 function getProductById(id) {
@@ -270,24 +275,20 @@ async function updateProduct(id, updatedProduct) {
 }
 
 function deleteProduct(id) {
+    _productsCache = null;
     const transaction = db.transaction([PRODUCT_STORE], 'readwrite');
     const store = transaction.objectStore(PRODUCT_STORE);
     return dbRequest(store.delete(id));
 }
 
-function searchProducts(query) {
-    if (!db) return Promise.resolve([]);
-    const transaction = db.transaction([PRODUCT_STORE], 'readonly');
-    const store = transaction.objectStore(PRODUCT_STORE);
-    return dbRequest(store.getAll()).then(products => {
-        const results = products.map(p => enrichProduct(p));
-        const qn = normalizeName(query);
-        if (!qn) return results;
-        return results.filter(p =>
-            p.productNameNorm.includes(qn) ||
-            p.storeNameNorm.includes(qn)
-        );
-    });
+async function searchProducts(query) {
+    const products = await getAllProducts();
+    const qn = normalizeName(query);
+    if (!qn) return products;
+    return products.filter(p =>
+        p.productNameNorm.includes(qn) ||
+        p.storeNameNorm.includes(qn)
+    );
 }
 
 function groupProductsByName(products) {
@@ -533,6 +534,7 @@ async function importData(file, options = {}) {
                     await dbRequest(store.add(newList));
                 }
 
+                _productsCache = null;
                 resolve({ imported, skipped, updated, importedLists: importedLists.length, total: importedProducts.length });
             } catch (error) {
                 reject(error);

@@ -2,7 +2,7 @@
   "name": "PriceTracker",
   "short_name": "PriceTracker",
   "description": "Compara precios de productos entre tiendas, escanea tarjetas de precio y crea listas de compra inteligentes",
-  "start_url": "/",
+  "start_url": "/?source=pwa",
   "scope": "/",
   "display": "standalone",
   "background_color": "#0b0d17",
