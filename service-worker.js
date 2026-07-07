@@ -1,4 +1,4 @@
-const CACHE_NAME = 'price-tracker-v4';
+const CACHE_NAME = 'price-tracker-v5';
 const urlsToCache = [
     './',
     './index.html',
@@ -67,14 +67,11 @@ self.addEventListener('fetch', event => {
     }
 
     event.respondWith(
-        caches.match(event.request).then(cached => {
-            const fetchPromise = fetch(event.request).then(response => {
-                if (response && response.status === 200) {
-                    caches.open(CACHE_NAME).then(cache => cache.put(event.request, response.clone()));
-                }
-                return response;
-            }).catch(() => cached);
-            return cached || fetchPromise;
-        })
+        fetch(event.request).then(response => {
+            if (response && response.status === 200) {
+                caches.open(CACHE_NAME).then(cache => cache.put(event.request, response.clone()));
+            }
+            return response;
+        }).catch(() => caches.match(event.request))
     );
 });
