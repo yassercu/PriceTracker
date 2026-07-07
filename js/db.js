@@ -1,5 +1,6 @@
 const DB_NAME = 'PriceTrackerDB';
 const DB_VERSION = 4;
+const APP_VERSION = '3.1.0';
 const PRODUCT_STORE = 'products';
 const LIST_STORE = 'shoppingLists';
 
@@ -39,8 +40,11 @@ function normalizeUnitLabel(label) {
         gramme: 'g', grammes: 'g',
         litre: 'L', litres: 'L',
         millilitre: 'ml', millilitres: 'ml', centilitre: 'cl', centilitres: 'cl',
-        unite: 'unidad', unites: 'unidad',
-        paquet: 'pack', paquets: 'pack'
+        unite: 'unidad', unites: 'unidad', piece: 'unidad', pieces: 'unidad',
+        paquet: 'pack', paquets: 'pack', sachet: 'pack', sachets: 'pack',
+        barquette: 'pack', bocal: 'pack', bocaux: 'pack',
+        flacon: 'pack', lot: 'pack', tranche: 'unidad', tranches: 'unidad',
+        dose: 'unidad', doses: 'unidad', poignee: 'pack'
     };
     return aliases[norm] || (label || '').trim();
 }

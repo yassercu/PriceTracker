@@ -27,6 +27,10 @@ async function initApp() {
         await initDB();
         await migrateProducts();
         populateUnitSelect();
+
+        const v = document.querySelector('.app-version');
+        if (v) v.textContent = 'v' + APP_VERSION;
+        document.title = 'PriceTracker v' + APP_VERSION;
         currentTab = getActiveTab();
         isDenseMode = getDenseMode();
 
@@ -392,56 +396,274 @@ async function checkDuplicateWarning() {
     }
 }
 
-function parseOCRText(text) {
-    const lines = text.split('\n').map(l => l.trim()).filter(l => l.length > 0);
-    let result = { name: '', price: '', unitQty: '', unitLabel: '' };
-
-    let nameParts = [];
-
-    lines.forEach((line) => {
-        const upperLine = line.toUpperCase();
-
-        const stdPriceMatch = line.match(/(\d+[,.]\d{2})\s*€/) || line.match(/^(\d+[,.]\d{2})\s*$/);
-        const frPriceMatch = line.match(/(\d+)€(\d{2})/);
-
-        if (!result.price && !upperLine.includes('SALE A') && !upperLine.includes('PRIX AU')) {
-            if (frPriceMatch) {
-                result.price = `${frPriceMatch[1]},${frPriceMatch[2]}`;
-            } else if (stdPriceMatch) {
-                result.price = stdPriceMatch[1].replace('.', ',');
-            }
+async function preprocessImage(file) {
+    try {
+        let img;
+        try {
+            img = await createImageBitmap(file);
+        } catch {
+            const url = URL.createObjectURL(file);
+            img = await new Promise((resolve, reject) => {
+                const image = new Image();
+                image.onload = () => resolve(image);
+                image.onerror = reject;
+                image.src = url;
+            });
         }
 
-        const packMatch = line.match(/(\d+)\s*x\s*(\d+(?:[,.]\d+)?)\s*(g|kg|l|ml|cl)/i);
-        const qtyMatch = line.match(/(\d+(?:[,.]\d+)?)\s*(g|kg|l|ml|cl|gr|uds|u|unite|unit|pack)/i);
+        const MAX_SIDE = 1600;
+        const { width, height } = img;
+        const scale = Math.max(1, MAX_SIDE / Math.max(width, height));
+        const w = Math.round(width * scale);
+        const h = Math.round(height * scale);
 
-        if (!result.unitQty && !upperLine.includes('SALE A') && !upperLine.includes('PRIX AU')) {
-            if (packMatch) {
-                const total = parseFloat(packMatch[1]) * parseFloat(packMatch[2].replace(',', '.'));
-                result.unitQty = String(total);
-                result.unitLabel = packMatch[3].toLowerCase();
-            } else if (qtyMatch) {
-                result.unitQty = qtyMatch[1].replace(',', '.');
-                result.unitLabel = qtyMatch[2].toLowerCase();
+        const canvas = document.createElement('canvas');
+        canvas.width = w;
+        canvas.height = h;
+        const ctx = canvas.getContext('2d');
+
+        try {
+            ctx.filter = 'grayscale(1) contrast(1.7) brightness(1.05)';
+        } catch { /* canvas filter no soportado */ }
+
+        ctx.drawImage(img, 0, 0, w, h);
+
+        if (img && typeof img.close === 'function') img.close();
+
+        return canvas;
+    } catch (error) {
+        console.error('preprocessImage falló, usando archivo original:', error);
+        return file;
+    }
+}
+
+async function ocrImage(img) {
+    const worker = await Tesseract.createWorker('spa+fra');
+    try {
+        const { data } = await worker.recognize(img);
+        return data;
+    } finally {
+        await worker.terminate();
+    }
+}
+
+function extractLines(data) {
+    let lines = [];
+
+    if (data && data.lines && data.lines.length) {
+        lines = data.lines.map(line => {
+            const bbox = line.bbox || {};
+            const x0 = bbox.x0 || 0, y0 = bbox.y0 || 0;
+            const x1 = bbox.x1 || 0, y1 = bbox.y1 || 0;
+            return {
+                text: (line.text || '').trim(),
+                confidence: line.confidence != null ? line.confidence : 0,
+                top: y0,
+                left: x0,
+                width: x1 - x0,
+                height: y1 - y0
+            };
+        }).filter(l => l.text.length > 0);
+    } else if (data && data.text) {
+        lines = data.text.split('\n')
+            .map(t => ({ text: t.trim(), confidence: 0, top: 0, left: 0, width: 0, height: 0 }))
+            .filter(l => l.text.length > 0);
+    }
+
+    lines.sort((a, b) => a.top - b.top || a.left - b.left);
+
+    const maxHeight = lines.reduce((m, l) => Math.max(m, l.height || 0), 0) || 1;
+    lines.forEach(l => { l.relHeight = (l.height || 0) / maxHeight; });
+    lines.maxHeight = maxHeight;
+
+    return lines;
+}
+
+function capitalizeWords(str) {
+    return str.toLowerCase().replace(/(^|\s)([a-záéíóúñ])/g, (_, pre, ch) => pre + ch.toUpperCase());
+}
+
+function parsePriceCard(lines) {
+    const result = {
+        name: '', price: '', unitQty: '', unitLabel: '',
+        detected: { price: false, unit: false, name: false }
+    };
+    if (!lines || !lines.length) return result;
+
+    const UNIT_VOCAB = 'g|gr|gram|kg|kilo|l|litro|ml|cl|mg|ud|uds|unidad|unid|u|unit|pack|paq|docena|lx|sobres|tabletas|pièce|pièces|sachet|sachets|barquette|bocal|flacon|lot|tranche|tranches|dose|doses|poignée';
+    const unitRegex = new RegExp('(' + UNIT_VOCAB + ')', 'i');
+    const packRegex = new RegExp('(\\d+)\\s*[x×*]\\s*(\\d+(?:[.,]\\d+)?)\\s*(' + UNIT_VOCAB + ')', 'i');
+    const singleRegex = new RegExp('(\\d+(?:[.,]\\d+)?)\\s*(' + UNIT_VOCAB + ')', 'i');
+    const amountRegex = /(\d{1,3}(?:[.,]\d{1,2})?)/g;
+    const altAmountRegex = /(\d+)[.,](\d{2})/g;
+    const ppuLineRegex = /PVP|UNITARIO|\/100|\/kg|\/l\b|PPU|PRIX.*UNIT|PRIX.*KIL|PRIX.*LITR|TARIF.*KIL|TARIF.*LITR/i;
+
+    const isBarcodeText = (t) => t.replace(/\D/g, '').length >= 8;
+
+    // ---------- PRICE ----------
+    let bestPrice = null;
+
+    lines.forEach((line, idx) => {
+        const t = line.text;
+        const up = t.toUpperCase();
+
+        const hasCurrency = /[€]/.test(t) || /\bEURO?S?\b/.test(up);
+        const hasKeyword = /PRECIO|PRICE|PRIX|PVP|UNIT|UNITARIO|TARIF|CO[UÛ]T|TTC/.test(up);
+        const hasUnit = unitRegex.test(t);
+        const bigText = (line.relHeight || 0) > 0.8;
+        const barcode = isBarcodeText(t);
+
+        const candidates = new Set();
+        let m;
+        amountRegex.lastIndex = 0;
+        while ((m = amountRegex.exec(t)) !== null) candidates.add(m[1]);
+        altAmountRegex.lastIndex = 0;
+        while ((m = altAmountRegex.exec(t)) !== null) candidates.add(m[1] + ',' + m[2]);
+
+        const frBetweenRegex = /(\d+)€(\d{2})/g;
+        let mf;
+        frBetweenRegex.lastIndex = 0;
+        while ((mf = frBetweenRegex.exec(t)) !== null) candidates.add(mf[1] + ',' + mf[2]);
+
+        candidates.forEach(amount => {
+            let score = 0;
+            if (hasCurrency) score += 3;
+            if (hasKeyword) score += 2;
+            if (hasUnit) score += 1;
+            if (bigText) score += 1;
+            if (barcode) score -= 3;
+            if (hasUnit && !hasCurrency && !hasKeyword) score -= 3;
+            const num = parseFloat(amount.replace(',', '.'));
+            if (num > 200) score -= 1;
+
+            if (bestPrice === null || score > bestPrice.score) {
+                bestPrice = { amount, score, lineIndex: idx };
             }
+        });
+    });
+
+    if (bestPrice) {
+        let amt = bestPrice.amount;
+        const dotIdx = amt.indexOf('.');
+        if (dotIdx !== -1) {
+            const frac = amt.slice(dotIdx + 1);
+            if (frac.length === 2) amt = amt.replace('.', ',');
+        }
+        result.price = amt;
+        result.detected.price = true;
+    }
+    const priceLineIndex = bestPrice ? bestPrice.lineIndex : -1;
+
+    // ---------- UNIT / QUANTITY ----------
+    let bestUnit = null;
+
+    lines.forEach((line, idx) => {
+        const t = line.text;
+        if (ppuLineRegex.test(t.toUpperCase())) return;
+
+        const packMatch = t.match(packRegex);
+        if (packMatch) {
+            const qty = parseFloat(packMatch[1]) * parseFloat(packMatch[2].replace(',', '.'));
+            const norm = normalizeUnitLabel(packMatch[3]);
+            if (!bestUnit || qty > bestUnit.qty) {
+                bestUnit = { qty, unit: norm, lineIndex: idx };
+            }
+            return;
         }
 
-        const isInfoLine = line.includes('€') || line.match(/\d+[,.]\d{2}/) ||
-                          upperLine.includes('SALE A') || upperLine.includes('PRIX AU') ||
-                          upperLine.includes('PPU') || upperLine.includes('NUTRI-SCORE');
-
-        if (line.length > 3 && !isInfoLine && nameParts.length < 3) {
-            nameParts.push(line);
+        const m = t.match(singleRegex);
+        if (m) {
+            const before = t.slice(0, m.index);
+            if (/\/\s*$/.test(before)) return;
+            const qty = parseFloat(m[1].replace(',', '.'));
+            const norm = normalizeUnitLabel(m[2]);
+            if (!bestUnit || qty > bestUnit.qty) {
+                bestUnit = { qty, unit: norm, lineIndex: idx };
+            }
         }
     });
 
-    if (nameParts.length > 0) {
-        result.name = nameParts.map(p => p.charAt(0).toUpperCase() + p.slice(1).toLowerCase()).join(' ');
-    } else if (lines.length > 0) {
-        result.name = lines[0];
+    if (bestUnit) {
+        result.unitQty = String(bestUnit.qty);
+        result.unitLabel = bestUnit.unit;
+        result.detected.unit = true;
+    }
+
+    // ---------- NAME ----------
+    const STOPWORDS = [
+        'INGREDIENTES', 'INGREDIENTS', 'INGRÉDIENTS',
+        'CADUCIDAD', 'CONSERVAR', 'CONSERVER',
+        'FABRICADO', 'FABRIQUÉ', 'FABRICANT',
+        'MODO', 'MODE', 'USO', 'EMPLOI',
+        'VALOR', 'VALEURS', 'ENERG', 'ÉNERGIE',
+        'NUTRIC', 'NUTRITION', 'NUTRITIONNELLES',
+        'GLUTEN', 'AZUCAR', 'AZÚCAR', 'SUCRES',
+        'PROTEIN', 'PROTÉINES', 'GRASA', 'GRAS', 'LIPIDES', 'FIBRES', 'SODIUM',
+        'DISTRIBUID', 'DISTRIBUÉ',
+        'LTE', 'INFO', 'INFORMATIONS', 'WWW', 'HTTP', '.COM', '.ES', '.FR',
+        'S.L', 'S.A', 'SARL', 'SAS', 'EURL', 'SNC',
+        'MARCA', 'MARQUE', 'NETO', 'NETTE', 'PESO', 'POIDS',
+        'PRODUCTO', 'PRODUIT', 'TTC', 'HT',
+        'DEMANDEZ', 'TENEUR', 'TRACES', 'LOT'
+    ];
+
+    const nameCandidates = [];
+    lines.forEach((line, idx) => {
+        const t = line.text.trim();
+        if (idx === priceLineIndex) return;
+        if (!t || t.length < 3 || t.length > 45) return;
+        if (line.confidence > 0 && line.confidence < 45) return;
+        if (isBarcodeText(t)) return;
+        const up = t.toUpperCase();
+        const upNorm = up.normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+        if (STOPWORDS.some(sw => upNorm.includes(sw))) return;
+        if (/^[€]?\s*\d/.test(t) && /[€]/i.test(t)) return;
+
+        let score = 0;
+        if (!/^[A-ZÁÉÍÓÚÑÀÂÇÈÊËÏÎÔÙÛÜ0-9\s]+$/.test(t)) score += 1;
+        if (/\s/.test(t)) score += 1;
+        if (line.confidence >= 70) score += 1;
+        nameCandidates.push({ text: t, score });
+    });
+
+    if (nameCandidates.length) {
+        nameCandidates.sort((a, b) => b.score - a.score);
+        result.name = capitalizeWords(nameCandidates[0].text);
+        result.detected.name = true;
+    } else {
+        const fb = lines.find((l, idx) =>
+            idx !== priceLineIndex && !isBarcodeText(l.text) && l.text.trim().length >= 3);
+        result.name = capitalizeWords(fb ? fb.text.trim() : (lines[0] ? lines[0].text : ''));
     }
 
     return result;
+}
+
+function applyParsedToForm(parsed) {
+    if (parsed.name) document.getElementById('productName').value = parsed.name;
+    if (parsed.price) {
+        document.getElementById('price').value = parsed.price;
+        updatePpuPreview();
+    }
+    if (parsed.unitQty) document.getElementById('unitQty').value = parsed.unitQty;
+    if (parsed.unitLabel) {
+        const select = document.getElementById('unitLabel');
+        const normUnit = normalizeUnitLabel(parsed.unitLabel);
+
+        if (normUnit === 'cl' && ![...select.options].some(opt => opt.value === 'cl')) {
+            const opt = document.createElement('option');
+            opt.value = 'cl';
+            opt.textContent = 'Centilitro (cl)';
+            select.appendChild(opt);
+        }
+
+        if ([...select.options].some(opt => opt.value === normUnit)) {
+            select.value = normUnit;
+        } else {
+            select.value = normUnit || '';
+        }
+    }
+    checkDuplicateWarning();
 }
 
 function openConfirmModal(message, onConfirm) {
@@ -886,18 +1108,47 @@ function setupEventListeners() {
 
     scanBtn.addEventListener('click', () => scanInput.click());
 
-    document.getElementById('demoScanBtn').addEventListener('click', (e) => {
+    document.getElementById('demoScanBtn').addEventListener('click', async (e) => {
         e.preventDefault();
-        const demoData = { name: 'Fingers de pollo Hacendado', price: '2,25', unitQty: '300', unitLabel: 'g' };
 
-        document.getElementById('productName').value = demoData.name;
-        document.getElementById('price').value = demoData.price;
-        document.getElementById('unitQty').value = demoData.unitQty;
-        document.getElementById('unitLabel').value = demoData.unitLabel;
+        const canvas = document.createElement('canvas');
+        canvas.width = 600;
+        canvas.height = 360;
+        const ctx = canvas.getContext('2d');
+        ctx.fillStyle = '#ffffff';
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+        ctx.fillStyle = '#111111';
+        ctx.textBaseline = 'top';
 
-        updatePpuPreview();
-        checkDuplicateWarning();
-        showToast('Datos de ejemplo cargados', 'info');
+        ctx.font = 'bold 34px sans-serif';
+        ctx.fillText('Fingers de Pollo', 30, 40);
+
+        ctx.font = '24px sans-serif';
+        ctx.fillText('Hacendado', 30, 90);
+
+        ctx.font = 'bold 40px sans-serif';
+        ctx.fillText('PRECIO  2,49 €', 30, 150);
+
+        ctx.font = '28px sans-serif';
+        ctx.fillText('500 g', 30, 210);
+
+        ctx.font = '18px sans-serif';
+        ctx.fillStyle = '#888888';
+        ctx.fillText('Conservar refrigerado', 30, 270);
+
+        try {
+            const image = await preprocessImage(canvas);
+            const data = await ocrImage(image);
+            const lines = extractLines(data);
+            const parsed = parsePriceCard(lines);
+            applyParsedToForm(parsed);
+            showToast('Demo OCR: ' + (parsed.name || '—') + ' · ' +
+                (parsed.price ? parsed.price + ' €' : 'precio?') +
+                (parsed.unitLabel ? ' · ' + parsed.unitQty + parsed.unitLabel : ''), 'success');
+        } catch (error) {
+            console.error('Demo OCR Error:', error);
+            showToast('No se pudo leer la imagen de demostración', 'error');
+        }
     });
 
     scanInput.addEventListener('change', async (e) => {
@@ -908,38 +1159,16 @@ function setupEventListeners() {
         scanLoading.hidden = false;
 
         try {
-            const worker = await Tesseract.createWorker('spa+fra');
-            const { data: { text } } = await worker.recognize(file);
-            await worker.terminate();
+            const image = await preprocessImage(file);
+            const data = await ocrImage(image);
+            const lines = extractLines(data);
+            const parsed = parsePriceCard(lines);
 
-            const parsed = parseOCRText(text);
+            applyParsedToForm(parsed);
 
-            if (parsed.name) document.getElementById('productName').value = parsed.name;
-            if (parsed.price) {
-                document.getElementById('price').value = parsed.price;
-                updatePpuPreview();
-            }
-            if (parsed.unitQty) document.getElementById('unitQty').value = parsed.unitQty;
-            if (parsed.unitLabel) {
-                const select = document.getElementById('unitLabel');
-                const normUnit = normalizeUnitLabel(parsed.unitLabel);
-
-                if (normUnit === 'cl' && ![...select.options].some(opt => opt.value === 'cl')) {
-                    const opt = document.createElement('option');
-                    opt.value = 'cl';
-                    opt.textContent = 'Centilitro (cl)';
-                    select.appendChild(opt);
-                }
-
-                if ([...select.options].some(opt => opt.value === normUnit)) {
-                    select.value = normUnit;
-                } else {
-                    select.value = normUnit || '';
-                }
-            }
-
-            checkDuplicateWarning();
-            showToast('Información extraída (ES/FR)', 'success');
+            showToast('Leído: ' + (parsed.name || '—') + ' · ' +
+                (parsed.price ? parsed.price + ' €' : 'precio?') +
+                (parsed.unitLabel ? ' · ' + parsed.unitQty + parsed.unitLabel : ''), 'success');
         } catch (error) {
             console.error('OCR Error:', error);
             showToast('No se pudo leer la imagen correctamente', 'error');
